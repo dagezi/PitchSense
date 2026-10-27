@@ -5,16 +5,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** F0 contour sampled at a fixed hop. Unvoiced frames are NaN. */
-class PitchTrack(
-    val frequencies: FloatArray,
-    val hopSeconds: Float,
-    /** Time of the first frame; frames are stamped at the center of their integration window. */
-    val startSeconds: Float,
-) {
-    fun timeOf(index: Int): Float = startSeconds + index * hopSeconds
-}
-
 object PitchAnalyzer {
     /** Speech F0 is well below 1 kHz, so analyzing at 16 kHz keeps YIN cheap without losing accuracy. */
     const val ANALYSIS_SAMPLE_RATE = 16_000

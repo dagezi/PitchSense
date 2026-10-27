@@ -9,14 +9,20 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -27,8 +33,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.dagezi.pitchsense.ui.GraphTrack
+import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
+import io.github.dagezi.pitchsense.ui.TrackRow
 import io.github.dagezi.pitchsense.ui.theme.PitchSenseTheme
+import io.github.dagezi.pitchsense.ui.theme.TrackColors
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,50 +57,86 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let(viewModel::open)
+        uri?.let(viewModel::addTrack)
     }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = { TopAppBar(title = { Text(stringResource(R.string.app_name)) }) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = { openAudio.launch(arrayOf("audio/*")) }) {
-                Text(stringResource(R.string.open_audio))
+            if (uiState.canAddTrack) {
+                ExtendedFloatingActionButton(
+                    text = { Text(stringResource(R.string.add_track)) },
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    onClick = { openAudio.launch(arrayOf("audio/*")) },
+                )
             }
         },
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center,
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            when (val state = uiState) {
-                MainUiState.Empty -> Text(stringResource(R.string.empty_hint))
-                is MainUiState.Loading -> Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    CircularProgressIndicator()
-                    Text(state.name)
-                }
-                is MainUiState.Loaded -> Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(state.name, style = MaterialTheme.typography.titleMedium)
+            AxisSelector(uiState.axis, viewModel::setAxis)
+
+            val readyTracks = uiState.tracks.filterIsInstance<TrackState.Ready>()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (readyTracks.isEmpty()) {
+                    Text(stringResource(R.string.empty_hint))
+                } else {
                     PitchGraph(
-                        track = state.track,
-                        durationSeconds = state.durationSeconds,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
+                        tracks = readyTracks
+                            .filter { it.visible }
+                            .map { GraphTrack(it.pitch, TrackColors[it.colorIndex]) },
+                        durationSeconds = readyTracks.maxOf { it.durationSeconds },
+                        axis = uiState.axis,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
-                is MainUiState.Failed -> Text(
-                    stringResource(R.string.load_failed, state.name, state.message),
-                    color = MaterialTheme.colorScheme.error,
+            }
+
+            Column {
+                for (track in uiState.tracks) {
+                    TrackRow(
+                        track = track,
+                        color = TrackColors[track.colorIndex],
+                        onVisibleChange = { viewModel.setTrackVisible(track.id, it) },
+                        onRemove = { viewModel.removeTrack(track.id) },
+                    )
+                }
+            }
+            // Keep the last row clear of the floating action button.
+            Spacer(Modifier.height(72.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AxisSelector(selected: PitchAxis, onSelect: (PitchAxis) -> Unit) {
+    val axes = PitchAxis.entries
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        axes.forEachIndexed { index, axis ->
+            SegmentedButton(
+                selected = axis == selected,
+                onClick = { onSelect(axis) },
+                shape = SegmentedButtonDefaults.itemShape(index, axes.size),
+            ) {
+                Text(
+                    stringResource(
+                        when (axis) {
+                            PitchAxis.Hz -> R.string.axis_hz
+                            PitchAxis.Semitones -> R.string.axis_semitones
+                        },
+                    ),
                 )
             }
         }

@@ -16,55 +16,79 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.dagezi.pitchsense.pitch.PitchTrack
-import kotlin.math.ln
+import kotlin.math.log2
 
-private const val MIN_HZ = 50f
-private const val MAX_HZ = 800f
-private val GRID_HZ = listOf(50, 100, 200, 400, 800)
+enum class PitchAxis { Hz, Semitones }
 
-/** Plots [track] on a logarithmic frequency axis spanning [durationSeconds] horizontally. */
+class GraphTrack(val pitch: PitchTrack, val color: Color)
+
+/** Vertical range in axis units, which are linear on screen. */
+private class AxisScale(val min: Float, val max: Float, val grid: List<Pair<Float, String>>)
+
+private val HZ_SCALE = AxisScale(
+    min = log2(50f),
+    max = log2(800f),
+    grid = listOf(50, 100, 200, 400, 800).map { log2(it.toFloat()) to "$it Hz" },
+)
+
+private val SEMITONE_SCALE = AxisScale(
+    min = -12f,
+    max = 12f,
+    grid = listOf(-12, -6, 0, 6, 12).map { it.toFloat() to (if (it == 0) "0 st" else "%+d st".format(it)) },
+)
+
+/** Converts [hz] into axis units. Semitones are relative to the track's median pitch. */
+private fun PitchAxis.valueOf(hz: Float, track: PitchTrack): Float = when (this) {
+    PitchAxis.Hz -> log2(hz)
+    PitchAxis.Semitones -> 12 * log2(hz / track.medianFrequency)
+}
+
+/** Overlays [tracks] spanning [durationSeconds] horizontally. */
 @Composable
 fun PitchGraph(
-    track: PitchTrack,
+    tracks: List<GraphTrack>,
     durationSeconds: Float,
+    axis: PitchAxis,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary,
 ) {
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val labelStyle = TextStyle(color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
     val textMeasurer = rememberTextMeasurer()
+    val scale = when (axis) {
+        PitchAxis.Hz -> HZ_SCALE
+        PitchAxis.Semitones -> SEMITONE_SCALE
+    }
 
     Canvas(modifier) {
-        fun yOf(hz: Float) = size.height * (1 - ln(hz / MIN_HZ) / ln(MAX_HZ / MIN_HZ))
+        fun yOf(value: Float) = size.height * (scale.max - value) / (scale.max - scale.min)
         fun xOf(seconds: Float) = size.width * seconds / durationSeconds
 
         for (second in 1..durationSeconds.toInt()) {
             val x = xOf(second.toFloat())
             drawLine(gridColor, Offset(x, 0f), Offset(x, size.height))
         }
-        for (hz in GRID_HZ) {
-            val y = yOf(hz.toFloat())
+        for ((value, text) in scale.grid) {
+            val y = yOf(value)
             drawLine(gridColor, Offset(0f, y), Offset(size.width, y))
-            val label = textMeasurer.measure("$hz Hz", labelStyle)
+            val label = textMeasurer.measure(text, labelStyle)
             drawText(label, topLeft = Offset(4.dp.toPx(), (y - label.size.height).coerceAtLeast(0f)))
         }
 
-        val path = Path()
-        var penDown = false
-        track.frequencies.forEachIndexed { i, hz ->
-            if (hz.isNaN()) {
-                penDown = false
-            } else {
-                val x = xOf(track.timeOf(i))
-                val y = yOf(hz.coerceIn(MIN_HZ, MAX_HZ))
-                if (penDown) path.lineTo(x, y) else path.moveTo(x, y)
-                penDown = true
+        val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        for (track in tracks) {
+            val path = Path()
+            var penDown = false
+            track.pitch.frequencies.forEachIndexed { i, hz ->
+                if (hz.isNaN()) {
+                    penDown = false
+                } else {
+                    val x = xOf(track.pitch.timeOf(i))
+                    val y = yOf(axis.valueOf(hz, track.pitch).coerceIn(scale.min, scale.max))
+                    if (penDown) path.lineTo(x, y) else path.moveTo(x, y)
+                    penDown = true
+                }
             }
+            drawPath(path, track.color, style = stroke)
         }
-        drawPath(
-            path,
-            color,
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
     }
 }
