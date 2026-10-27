@@ -101,8 +101,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var recorder: AudioRecorder? = null
 
     fun addTrack(uri: Uri) {
-        if (!_uiState.value.canAddTrack) return
-        addTrack(displayName(uri)) { AudioDecoder.decode(getApplication(), uri) }
+        addTracks(listOf(uri))
+    }
+
+    /** Adds as many of [uris] as there are free slots; returns how many were added. */
+    fun addTracks(uris: List<Uri>): Int {
+        var added = 0
+        for (uri in uris) {
+            if (!_uiState.value.canAddTrack) break
+            addTrack(displayName(uri)) { AudioDecoder.decode(getApplication(), uri) }
+            added++
+        }
+        return added
     }
 
     /** Adds a track named [name] whose audio comes from [load], which runs off the main thread. */

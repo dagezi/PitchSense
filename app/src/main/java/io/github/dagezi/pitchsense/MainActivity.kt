@@ -1,7 +1,9 @@
 package io.github.dagezi.pitchsense
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.unit.dp
@@ -61,13 +65,43 @@ import io.github.dagezi.pitchsense.ui.theme.PitchSenseTheme
 import io.github.dagezi.pitchsense.ui.theme.TrackColors
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             PitchSenseTheme {
-                MainScreen()
+                MainScreen(viewModel)
             }
+        }
+        // On recreation (e.g. rotation) the intent was already handled.
+        if (savedInstanceState == null) handleIncomingAudio(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingAudio(intent)
+    }
+
+    /** Adds audio shared to us ("Share" or "Open with") as tracks. */
+    private fun handleIncomingAudio(intent: Intent) {
+        val uris = when (intent.action) {
+            Intent.ACTION_SEND ->
+                listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            else -> emptyList()
+        }
+        if (uris.isEmpty()) return
+        val added = viewModel.addTracks(uris)
+        if (added < uris.size) {
+            Toast.makeText(
+                this,
+                getString(R.string.tracks_not_added, uris.size - added, MAX_TRACKS),
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 }
