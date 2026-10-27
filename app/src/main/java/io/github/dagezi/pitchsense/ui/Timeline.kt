@@ -12,7 +12,9 @@ data class Viewport(val start: Float, val duration: Float) {
     /** Keeps the viewport inside [bounds] and not narrower than [MIN_VISIBLE_SECONDS]. */
     fun clampedTo(bounds: TimeRange): Viewport {
         val clampedDuration = duration.coerceIn(minOf(MIN_VISIBLE_SECONDS, bounds.length), bounds.length)
-        return Viewport(start.coerceIn(bounds.start, bounds.end - clampedDuration), clampedDuration)
+        // end - duration can round to just below start when the viewport spans all of bounds.
+        val maxStart = maxOf(bounds.start, bounds.end - clampedDuration)
+        return Viewport(start.coerceIn(bounds.start, maxStart), clampedDuration)
     }
 
     companion object {

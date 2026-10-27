@@ -24,6 +24,14 @@ class ViewportTest {
     }
 
     @Test
+    fun fullWidthWithRoundingErrorDoesNotCrash() {
+        // From a crash: end - length lands just below start in float arithmetic.
+        val bounds = TimeRange(-0.025718153f, 2.1f)
+        val clamped = Viewport.fit(bounds).clampedTo(bounds)
+        assertEquals(bounds.start, clamped.start)
+    }
+
+    @Test
     fun boundsShorterThanMinimumWidthShowEverything() {
         assertEquals(Viewport(0f, 0.05f), Viewport(0f, 0.01f).clampedTo(TimeRange(0f, 0.05f)))
     }
