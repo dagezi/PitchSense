@@ -24,6 +24,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +44,7 @@ import io.github.dagezi.pitchsense.ui.GraphTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
 import io.github.dagezi.pitchsense.ui.TrackRow
+import io.github.dagezi.pitchsense.ui.Viewport
 import io.github.dagezi.pitchsense.ui.theme.PitchSenseTheme
 import io.github.dagezi.pitchsense.ui.theme.TrackColors
 
@@ -66,9 +68,29 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         uri?.let(viewModel::addTrack)
     }
 
+    val readyTracks = uiState.readyTracks
+    val timeline = uiState.timeline
+    // Refit whenever tracks are added or removed; offsets changing keep the current view.
+    var viewport by remember(readyTracks.map { it.id }) { mutableStateOf(timeline?.let(Viewport::fit)) }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.app_name)) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                actions = {
+                    TextButton(onClick = viewModel::alignOnsets, enabled = readyTracks.size >= 2) {
+                        Text(stringResource(R.string.align_onsets))
+                    }
+                    TextButton(
+                        onClick = { viewport = timeline?.let(Viewport::fit) },
+                        enabled = timeline != null,
+                    ) {
+                        Text(stringResource(R.string.fit_view))
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             if (uiState.canAddTrack) {
                 ExtendedFloatingActionButton(
@@ -88,7 +110,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ) {
             AxisSelector(uiState.axis, viewModel::setAxis)
 
-            val readyTracks = uiState.tracks.filterIsInstance<TrackState.Ready>()
             val playingTrack = readyTracks.find { it.id == uiState.playingTrackId }
             var cursorSeconds by remember { mutableStateOf<Float?>(null) }
             LaunchedEffect(playingTrack?.id) {
@@ -105,16 +126,21 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     .weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
-                if (readyTracks.isEmpty()) {
+                if (timeline == null) {
                     Text(stringResource(R.string.empty_hint))
                 } else {
                     PitchGraph(
                         tracks = readyTracks
                             .filter { it.visible }
-                            .map { GraphTrack(it.pitch, TrackColors[it.colorIndex]) },
-                        durationSeconds = readyTracks.maxOf { it.durationSeconds },
+                            .map { GraphTrack(it.id, it.pitch, it.offsetSeconds, TrackColors[it.colorIndex]) },
+                        viewport = (viewport ?: Viewport.fit(timeline)).clampedTo(timeline),
+                        bounds = timeline,
                         axis = uiState.axis,
+                        onViewportChange = { viewport = it },
+                        onTrackOffsetChange = viewModel::setTrackOffset,
+                        onSelectionChange = viewModel::setSelection,
                         modifier = Modifier.fillMaxSize(),
+                        selection = uiState.selection,
                         cursor = cursorSeconds?.let { seconds ->
                             playingTrack?.let { GraphCursor(seconds, TrackColors[it.colorIndex]) }
                         },

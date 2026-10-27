@@ -23,17 +23,22 @@ class PcmPlayer {
     val positionSeconds: Float?
         get() = session?.let { (it.startFrame + it.track.playbackHeadPosition).toFloat() / it.sampleRate }
 
-    /** Plays [audio] from [fromSeconds] to the end. Returns when playback finishes; cancel to stop. */
-    suspend fun play(audio: DecodedAudio, fromSeconds: Float = 0f) = withContext(Dispatchers.IO) {
+    /** Plays [audio] between the given times. Returns when playback finishes; cancel to stop. */
+    suspend fun play(
+        audio: DecodedAudio,
+        fromSeconds: Float = 0f,
+        toSeconds: Float = audio.durationSeconds,
+    ) = withContext(Dispatchers.IO) {
         val startFrame = (fromSeconds * audio.sampleRate).toInt().coerceIn(0, audio.samples.size)
+        val endFrame = (toSeconds * audio.sampleRate).toInt().coerceIn(startFrame, audio.samples.size)
         val track = createTrack(audio.sampleRate)
         session = Session(track, startFrame, audio.sampleRate)
         try {
             track.play()
             var offset = startFrame
-            while (offset < audio.samples.size) {
+            while (offset < endFrame) {
                 ensureActive()
-                val count = min(CHUNK_FRAMES, audio.samples.size - offset)
+                val count = min(CHUNK_FRAMES, endFrame - offset)
                 val written = track.write(audio.samples, offset, count, AudioTrack.WRITE_BLOCKING)
                 check(written >= 0) { "AudioTrack.write failed: $written" }
                 offset += written

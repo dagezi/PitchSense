@@ -18,5 +18,18 @@ class PitchTrack(
         }
     }
 
+    /**
+     * Start of the first run of at least [minRun] consecutive voiced frames, or null if there is none.
+     * Requiring a run skips isolated detections caused by noise before speech begins.
+     */
+    fun onsetSeconds(minRun: Int = 5): Float? {
+        var run = 0
+        frequencies.forEachIndexed { i, hz ->
+            run = if (hz.isNaN()) 0 else run + 1
+            if (run == minRun) return timeOf(i - minRun + 1)
+        }
+        return null
+    }
+
     fun timeOf(index: Int): Float = startSeconds + index * hopSeconds
 }

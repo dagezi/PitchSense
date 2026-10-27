@@ -73,6 +73,13 @@ fun TrackRow(
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(track.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (track is TrackState.Ready && track.offsetSeconds != 0f) {
+                Text(
+                    stringResource(R.string.track_offset, track.offsetSeconds),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             if (track is TrackState.Failed) {
                 Text(
                     stringResource(R.string.load_failed, track.message),
