@@ -26,13 +26,19 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.dagezi.pitchsense.ui.GraphCursor
 import io.github.dagezi.pitchsense.ui.GraphTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
@@ -83,6 +89,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             AxisSelector(uiState.axis, viewModel::setAxis)
 
             val readyTracks = uiState.tracks.filterIsInstance<TrackState.Ready>()
+            val playingTrack = readyTracks.find { it.id == uiState.playingTrackId }
+            var cursorSeconds by remember { mutableStateOf<Float?>(null) }
+            LaunchedEffect(playingTrack?.id) {
+                cursorSeconds = null
+                if (playingTrack == null) return@LaunchedEffect
+                while (true) {
+                    withFrameNanos { }
+                    cursorSeconds = viewModel.playbackPositionSeconds()
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -99,6 +115,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         durationSeconds = readyTracks.maxOf { it.durationSeconds },
                         axis = uiState.axis,
                         modifier = Modifier.fillMaxSize(),
+                        cursor = cursorSeconds?.let { seconds ->
+                            playingTrack?.let { GraphCursor(seconds, TrackColors[it.colorIndex]) }
+                        },
                     )
                 }
             }
@@ -108,7 +127,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     TrackRow(
                         track = track,
                         color = TrackColors[track.colorIndex],
+                        playing = track.id == uiState.playingTrackId,
                         onVisibleChange = { viewModel.setTrackVisible(track.id, it) },
+                        onTogglePlayback = { viewModel.togglePlayback(track.id) },
                         onRemove = { viewModel.removeTrack(track.id) },
                     )
                 }

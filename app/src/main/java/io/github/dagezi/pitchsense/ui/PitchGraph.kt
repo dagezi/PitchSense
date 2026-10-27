@@ -43,6 +43,9 @@ private fun PitchAxis.valueOf(hz: Float, track: PitchTrack): Float = when (this)
     PitchAxis.Semitones -> 12 * log2(hz / track.medianFrequency)
 }
 
+/** A vertical line marking a time, such as the playback position. */
+class GraphCursor(val seconds: Float, val color: Color)
+
 /** Overlays [tracks] spanning [durationSeconds] horizontally. */
 @Composable
 fun PitchGraph(
@@ -50,6 +53,7 @@ fun PitchGraph(
     durationSeconds: Float,
     axis: PitchAxis,
     modifier: Modifier = Modifier,
+    cursor: GraphCursor? = null,
 ) {
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val labelStyle = TextStyle(color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
@@ -89,6 +93,11 @@ fun PitchGraph(
                 }
             }
             drawPath(path, track.color, style = stroke)
+        }
+
+        if (cursor != null) {
+            val x = xOf(cursor.seconds)
+            drawLine(cursor.color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
         }
     }
 }

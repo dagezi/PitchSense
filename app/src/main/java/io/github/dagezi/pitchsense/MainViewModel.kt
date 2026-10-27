@@ -6,6 +6,8 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.dagezi.pitchsense.audio.AudioDecoder
+import io.github.dagezi.pitchsense.audio.DecodedAudio
+import io.github.dagezi.pitchsense.audio.PcmPlayer
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
@@ -34,10 +36,12 @@ sealed interface TrackState {
         override val id: Long,
         override val name: String,
         override val colorIndex: Int,
+        val audio: DecodedAudio,
         val pitch: PitchTrack,
-        val durationSeconds: Float,
         val visible: Boolean = true,
-    ) : TrackState
+    ) : TrackState {
+        val durationSeconds: Float get() = audio.durationSeconds
+    }
 
     data class Failed(
         override val id: Long,
@@ -50,6 +54,7 @@ sealed interface TrackState {
 data class MainUiState(
     val tracks: List<TrackState> = emptyList(),
     val axis: PitchAxis = PitchAxis.Hz,
+    val playingTrackId: Long? = null,
 ) {
     val canAddTrack: Boolean get() = tracks.size < MAX_TRACKS
 }
@@ -60,6 +65,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val loadJobs = mutableMapOf<Long, Job>()
     private var nextId = 0L
+
+    private val player = PcmPlayer()
+    private var playJob: Job? = null
 
     fun addTrack(uri: Uri) {
         val tracks = _uiState.value.tracks
@@ -73,7 +81,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val loaded = try {
                 withContext(Dispatchers.Default) {
                     val audio = AudioDecoder.decode(getApplication(), uri)
-                    TrackState.Ready(id, name, colorIndex, PitchAnalyzer.analyze(audio), audio.durationSeconds)
+                    TrackState.Ready(id, name, colorIndex, audio, PitchAnalyzer.analyze(audio))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -85,7 +93,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun togglePlayback(id: Long) {
+        if (_uiState.value.playingTrackId == id) {
+            stopPlayback()
+            return
+        }
+        val track = _uiState.value.tracks.find { it.id == id } as? TrackState.Ready ?: return
+        playJob?.cancel()
+        _uiState.update { it.copy(playingTrackId = id) }
+        playJob = viewModelScope.launch {
+            try {
+                player.play(track.audio)
+            } finally {
+                _uiState.update { if (it.playingTrackId == id) it.copy(playingTrackId = null) else it }
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        playJob?.cancel()
+        playJob = null
+        _uiState.update { it.copy(playingTrackId = null) }
+    }
+
+    /** Playback position of the playing track in seconds, or null when nothing is playing. */
+    fun playbackPositionSeconds(): Float? = player.positionSeconds
+
     fun removeTrack(id: Long) {
+        if (_uiState.value.playingTrackId == id) stopPlayback()
         loadJobs.remove(id)?.cancel()
         _uiState.update { state -> state.copy(tracks = state.tracks.filterNot { it.id == id }) }
     }

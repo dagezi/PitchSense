@@ -2,6 +2,8 @@
     <string name="app_name">PitchSense</string>
     <string name="add_track">Add track</string>
     <string name="remove_track">Remove track</string>
+    <string name="play">Play</string>
+    <string name="stop">Stop</string>
     <string name="empty_hint">Add audio files to compare their pitch contours.</string>
     <string name="load_failed">Could not load: %1$s</string>
     <string name="axis_hz">Hz</string>
