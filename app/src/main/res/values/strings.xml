@@ -7,7 +7,11 @@
     <string name="track_offset">Offset %1$+.2f s</string>
     <string name="align_onsets">Align</string>
     <string name="fit_view">Fit</string>
-    <string name="empty_hint">Add audio files to compare their pitch contours.</string>
+    <string name="record">Record</string>
+    <string name="stop_recording">Stop</string>
+    <string name="recording_elapsed">Recording %1$d:%2$02d</string>
+    <string name="microphone_permission_denied">Microphone permission is needed to record.</string>
+    <string name="empty_hint">Record or add audio to compare pitch contours.</string>
     <string name="load_failed">Could not load: %1$s</string>
     <string name="axis_hz">Hz</string>
     <string name="axis_semitones">Semitones</string>

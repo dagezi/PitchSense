@@ -9,8 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.materialIcon
-import androidx.compose.material.icons.materialPath
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -22,23 +20,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.dagezi.pitchsense.R
 import io.github.dagezi.pitchsense.TrackState
-
-/** material-icons-core has no stop icon, so draw the standard square. */
-private val StopIcon: ImageVector = materialIcon(name = "Filled.Stop") {
-    materialPath {
-        moveTo(6f, 6f)
-        horizontalLineToRelative(12f)
-        verticalLineToRelative(12f)
-        horizontalLineTo(6f)
-        close()
-    }
-}
 
 /** One entry of the track list. The leading checkbox doubles as the track's color legend. */
 @Composable

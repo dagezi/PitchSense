@@ -1,6 +1,9 @@
 package io.github.dagezi.pitchsense
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -9,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -35,7 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -43,6 +52,9 @@ import io.github.dagezi.pitchsense.ui.GraphCursor
 import io.github.dagezi.pitchsense.ui.GraphTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
+import io.github.dagezi.pitchsense.ui.RecordIcon
+import io.github.dagezi.pitchsense.ui.RecordingRow
+import io.github.dagezi.pitchsense.ui.StopIcon
 import io.github.dagezi.pitchsense.ui.TrackRow
 import io.github.dagezi.pitchsense.ui.Viewport
 import io.github.dagezi.pitchsense.ui.theme.PitchSenseTheme
@@ -66,6 +78,31 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::addTrack)
+    }
+
+    val context = LocalContext.current
+    val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            viewModel.startRecording()
+        } else {
+            Toast.makeText(context, R.string.microphone_permission_denied, Toast.LENGTH_LONG).show()
+        }
+    }
+    fun record() {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) viewModel.startRecording() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    // Only record while the app is in the foreground.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stopRecording() }
+
+    var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
+    LaunchedEffect(uiState.recording) {
+        recordingStatus = null
+        while (uiState.recording) {
+            withFrameNanos { }
+            recordingStatus = viewModel.recordingStatus()
+        }
     }
 
     val readyTracks = uiState.readyTracks
@@ -92,12 +129,27 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             )
         },
         floatingActionButton = {
-            if (uiState.canAddTrack) {
-                ExtendedFloatingActionButton(
-                    text = { Text(stringResource(R.string.add_track)) },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    onClick = { openAudio.launch(arrayOf("audio/*")) },
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (uiState.recording) {
+                    ExtendedFloatingActionButton(
+                        text = { Text(stringResource(R.string.stop_recording)) },
+                        icon = { Icon(StopIcon, contentDescription = null) },
+                        onClick = viewModel::stopRecording,
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                } else if (uiState.canAddTrack) {
+                    ExtendedFloatingActionButton(
+                        text = { Text(stringResource(R.string.record)) },
+                        icon = { Icon(RecordIcon, contentDescription = null) },
+                        onClick = ::record,
+                    )
+                    ExtendedFloatingActionButton(
+                        text = { Text(stringResource(R.string.add_track)) },
+                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                        onClick = { openAudio.launch(arrayOf("audio/*")) },
+                    )
+                }
             }
         },
     ) { innerPadding ->
@@ -159,6 +211,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         onRemove = { viewModel.removeTrack(track.id) },
                     )
                 }
+                if (uiState.recording) RecordingRow(recordingStatus)
             }
             // Keep the last row clear of the floating action button.
             Spacer(Modifier.height(72.dp))

@@ -3,11 +3,14 @@ package io.github.dagezi.pitchsense
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.dagezi.pitchsense.audio.AudioDecoder
+import io.github.dagezi.pitchsense.audio.AudioRecorder
 import io.github.dagezi.pitchsense.audio.DecodedAudio
 import io.github.dagezi.pitchsense.audio.PcmPlayer
+import io.github.dagezi.pitchsense.audio.WavWriter
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
@@ -21,8 +24,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 const val MAX_TRACKS = 4
+private const val MIN_RECORDING_SECONDS = 0.3f
+private const val TAG = "MainViewModel"
+
+class RecordingStatus(val elapsedSeconds: Float, val level: Float)
 
 sealed interface TrackState {
     val id: Long
@@ -60,8 +71,10 @@ data class MainUiState(
     val playingTrackId: Long? = null,
     /** Part of the timeline to play, or null to play whole tracks. */
     val selection: TimeRange? = null,
+    val recording: Boolean = false,
 ) {
-    val canAddTrack: Boolean get() = tracks.size < MAX_TRACKS
+    /** A recording in progress holds a slot, so nothing else can be added meanwhile. */
+    val canAddTrack: Boolean get() = !recording && tracks.size < MAX_TRACKS
 
     val readyTracks: List<TrackState.Ready> get() = tracks.filterIsInstance<TrackState.Ready>()
 
@@ -85,18 +98,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val player = PcmPlayer()
     private var playJob: Job? = null
 
+    private var recorder: AudioRecorder? = null
+
     fun addTrack(uri: Uri) {
+        if (!_uiState.value.canAddTrack) return
+        addTrack(displayName(uri)) { AudioDecoder.decode(getApplication(), uri) }
+    }
+
+    /** Adds a track named [name] whose audio comes from [load], which runs off the main thread. */
+    private fun addTrack(name: String, load: suspend () -> DecodedAudio) {
         val tracks = _uiState.value.tracks
         if (tracks.size >= MAX_TRACKS) return
         val id = nextId++
-        val name = displayName(uri)
         val colorIndex = (0 until MAX_TRACKS).first { i -> tracks.none { it.colorIndex == i } }
         _uiState.update { it.copy(tracks = it.tracks + TrackState.Loading(id, name, colorIndex)) }
 
         loadJobs[id] = viewModelScope.launch {
             val loaded = try {
                 withContext(Dispatchers.Default) {
-                    val audio = AudioDecoder.decode(getApplication(), uri)
+                    val audio = load()
                     TrackState.Ready(id, name, colorIndex, audio, PitchAnalyzer.analyze(audio))
                 }
             } catch (e: CancellationException) {
@@ -106,6 +126,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             loadJobs.remove(id)
             replaceTrack(id) { loaded }
+        }
+    }
+
+    /** Starts recording from the microphone. The caller must already hold RECORD_AUDIO. */
+    fun startRecording() {
+        if (!_uiState.value.canAddTrack) return
+        stopPlayback()
+        val recorder = AudioRecorder().also { recorder = it }
+        val startedAt = LocalDateTime.now()
+        val name = "Recording " + startedAt.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        _uiState.update { it.copy(recording = true) }
+
+        viewModelScope.launch {
+            val audio = try {
+                recorder.record()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Surface the failure as a failed track so the user sees what went wrong.
+                addTrack(name) { throw e }
+                null
+            } finally {
+                this@MainViewModel.recorder = null
+                _uiState.update { it.copy(recording = false) }
+            }
+            // Ignore accidental taps on Record.
+            if (audio == null || audio.durationSeconds < MIN_RECORDING_SECONDS) return@launch
+            addTrack(name) {
+                saveRecording(audio, startedAt)
+                audio
+            }
+        }
+    }
+
+    fun stopRecording() {
+        recorder?.stop()
+    }
+
+    /** Progress of the ongoing recording, or null when not recording. */
+    fun recordingStatus(): RecordingStatus? =
+        recorder?.let { RecordingStatus(it.elapsedSeconds, it.level) }
+
+    private fun saveRecording(audio: DecodedAudio, startedAt: LocalDateTime) {
+        val dir = File(getApplication<Application>().filesDir, "recordings")
+        val file = File(dir, "recording-" + startedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".wav")
+        try {
+            dir.mkdirs()
+            file.outputStream().buffered().use { WavWriter.write(audio, it) }
+        } catch (e: IOException) {
+            // The track is still usable from memory; only reopening it later is affected.
+            Log.w(TAG, "Could not save $file", e)
         }
     }
 
