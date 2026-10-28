@@ -13,21 +13,28 @@ object PitchAnalyzer {
     /** Frames quieter than this fraction of the peak amplitude are treated as unvoiced. */
     private const val SILENCE_RATIO = 0.03f
 
+    /** Removes mains hum and rumble, which otherwise read as low pitch during silence. */
+    private const val HIGH_PASS_HZ = 70f
+
     fun analyze(audio: DecodedAudio): PitchTrack {
-        val samples = Resampler.resample(audio.samples, audio.sampleRate, ANALYSIS_SAMPLE_RATE)
+        val samples = HighPassFilter.apply(
+            Resampler.resample(audio.samples, audio.sampleRate, ANALYSIS_SAMPLE_RATE),
+            ANALYSIS_SAMPLE_RATE,
+            HIGH_PASS_HZ,
+        )
         val detector = YinPitchDetector(ANALYSIS_SAMPLE_RATE)
         val hop = (ANALYSIS_SAMPLE_RATE * HOP_SECONDS).roundToInt()
         val gate = (samples.maxOfOrNull { abs(it) } ?: 0f) * SILENCE_RATIO
         val frameCount =
             if (samples.size < detector.frameSize) 0 else (samples.size - detector.frameSize) / hop + 1
 
-        val frequencies = FloatArray(frameCount) { i ->
+        val candidates = List(frameCount) { i ->
             val offset = i * hop
-            if (rms(samples, offset, detector.windowSize) < gate) Float.NaN
-            else detector.detect(samples, offset)
+            if (rms(samples, offset, detector.windowSize) < gate) emptyList()
+            else detector.candidates(samples, offset)
         }
         return PitchTrack(
-            frequencies = frequencies,
+            frequencies = PitchTracker.track(candidates),
             hopSeconds = hop.toFloat() / ANALYSIS_SAMPLE_RATE,
             startSeconds = detector.windowSize / 2f / ANALYSIS_SAMPLE_RATE,
         )

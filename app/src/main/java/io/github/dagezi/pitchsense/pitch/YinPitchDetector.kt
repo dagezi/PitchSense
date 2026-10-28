@@ -3,15 +3,24 @@ package io.github.dagezi.pitchsense.pitch
 import kotlin.math.ceil
 import kotlin.math.floor
 
+/** A possible F0 for one frame. Lower [cost] means a more periodic signal at that frequency. */
+data class PitchCandidate(val frequency: Float, val cost: Float)
+
 /**
  * Fundamental frequency estimator based on the YIN algorithm
  * (de Cheveigné & Kawahara, 2002).
+ *
+ * Instead of committing to one answer per frame, it reports every dip of the cumulative mean
+ * normalized difference as a candidate, and [PitchTracker] picks among them using the
+ * neighboring frames. That keeps fast glides, whose dips are shallow, and avoids octave jumps.
  */
 class YinPitchDetector(
     private val sampleRate: Int,
-    minFrequency: Float = 50f,
+    // 65 Hz keeps 50/60 Hz mains hum out of range while still covering low male voices.
+    minFrequency: Float = 65f,
     maxFrequency: Float = 800f,
-    private val threshold: Float = 0.15f,
+    /** Dips at or above this are too aperiodic to be worth considering. */
+    private val maxCost: Float = 0.8f,
 ) {
     private val minLag = floor(sampleRate / maxFrequency).toInt().coerceAtLeast(2)
     private val maxLag = ceil(sampleRate / minFrequency).toInt()
@@ -19,13 +28,13 @@ class YinPitchDetector(
     /** Number of samples integrated by the difference function. */
     val windowSize = maxLag
 
-    /** Number of samples [detect] reads starting at its offset. */
+    /** Number of samples [candidates] reads starting at its offset. */
     val frameSize = windowSize + maxLag + 2
 
     private val diff = FloatArray(maxLag + 2)
 
-    /** Returns F0 in Hz of the frame starting at [offset], or NaN if no periodicity is found. */
-    fun detect(samples: FloatArray, offset: Int): Float {
+    /** Returns the F0 candidates of the frame starting at [offset]; empty if nothing is periodic. */
+    fun candidates(samples: FloatArray, offset: Int): List<PitchCandidate> {
         require(offset >= 0 && offset + frameSize <= samples.size)
 
         for (tau in 1..maxLag + 1) {
@@ -45,15 +54,15 @@ class YinPitchDetector(
             diff[tau] = if (runningSum == 0f) 1f else diff[tau] * tau / runningSum
         }
 
-        var tau = minLag
-        while (tau <= maxLag) {
-            if (diff[tau] < threshold) {
-                while (tau + 1 <= maxLag && diff[tau + 1] < diff[tau]) tau++
-                return sampleRate / refine(tau)
+        val result = mutableListOf<PitchCandidate>()
+        for (tau in minLag..maxLag) {
+            if (diff[tau] < maxCost && diff[tau] <= diff[tau - 1] && diff[tau] < diff[tau + 1]) {
+                // A periodic signal dips about as deeply at every multiple of its period, so favor
+                // shorter periods slightly, like YIN's choice of the first dip, to avoid octave-down errors.
+                result += PitchCandidate(sampleRate / refine(tau), diff[tau] + LAG_BIAS * tau / maxLag)
             }
-            tau++
         }
-        return Float.NaN
+        return result
     }
 
     /** Parabolic interpolation around the local minimum at [tau]. */
@@ -63,5 +72,9 @@ class YinPitchDetector(
         val s2 = diff[tau + 1]
         val denominator = s0 - 2 * s1 + s2
         return if (denominator == 0f) tau.toFloat() else tau + 0.5f * (s0 - s2) / denominator
+    }
+
+    private companion object {
+        const val LAG_BIAS = 0.1f
     }
 }
