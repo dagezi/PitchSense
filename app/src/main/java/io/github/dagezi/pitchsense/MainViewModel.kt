@@ -10,7 +10,7 @@ import io.github.dagezi.pitchsense.audio.AudioDecoder
 import io.github.dagezi.pitchsense.audio.AudioRecorder
 import io.github.dagezi.pitchsense.audio.DecodedAudio
 import io.github.dagezi.pitchsense.audio.PcmPlayer
-import io.github.dagezi.pitchsense.audio.WavWriter
+import io.github.dagezi.pitchsense.audio.RecordingStore
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
@@ -24,8 +24,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -99,6 +97,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var playJob: Job? = null
 
     private var recorder: AudioRecorder? = null
+
+    private val recordingStore = RecordingStore(application)
 
     fun addTrack(uri: Uri) {
         addTracks(listOf(uri))
@@ -179,14 +179,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recorder?.let { RecordingStatus(it.elapsedSeconds, it.level) }
 
     private fun saveRecording(audio: DecodedAudio, startedAt: LocalDateTime) {
-        val dir = File(getApplication<Application>().filesDir, "recordings")
-        val file = File(dir, "recording-" + startedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".wav")
+        val name = "recording-" + startedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".wav"
         try {
-            dir.mkdirs()
-            file.outputStream().buffered().use { WavWriter.write(audio, it) }
-        } catch (e: IOException) {
+            recordingStore.save(audio, name)
+        } catch (e: Exception) {
             // The track is still usable from memory; only reopening it later is affected.
-            Log.w(TAG, "Could not save $file", e)
+            Log.w(TAG, "Could not save $name", e)
         }
     }
 
