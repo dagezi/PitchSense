@@ -1,0 +1,20 @@
+<svg version="1.1"
+     width="108" height="108"
+     xmlns="http://www.w3.org/2000/svg">
+
+  <!-- rect x="21" y="21" width="66" height="66"
+      fill="none" stroke="gray" stroke-width="0.5" / -->
+
+  <path stroke="green" stroke-width="6" 
+    stroke-linecap="butt" fill="none"
+    d="M 0 48 h 42 a 16 16 0 0 0 32 0 h 36" />
+  
+  <circle stroke="orange" stroke-width="6"
+    fill="none"
+    cx="68" cy="30" r="6" />
+  
+  <path stroke="green" stroke-width="6" 
+    stroke-linecap="butt" fill="none"
+    d="M 24 0 c 0 100 40 90 100 70" />
+
+</svg>
