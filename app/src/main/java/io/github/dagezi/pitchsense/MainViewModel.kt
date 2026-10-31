@@ -1,15 +1,21 @@
 package io.github.dagezi.pitchsense
 
 import android.app.Application
+import android.content.Intent
+import android.media.projection.MediaProjection
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.dagezi.pitchsense.audio.AudioDecoder
 import io.github.dagezi.pitchsense.audio.AudioRecorder
 import io.github.dagezi.pitchsense.audio.DecodedAudio
 import io.github.dagezi.pitchsense.audio.PcmPlayer
+import io.github.dagezi.pitchsense.audio.PlaybackCaptureService
 import io.github.dagezi.pitchsense.audio.RecordingStore
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
 import io.github.dagezi.pitchsense.pitch.PitchTrack
@@ -97,6 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var playJob: Job? = null
 
     private var recorder: AudioRecorder? = null
+    private var recordingAppAudio = false
 
     private val recordingStore = RecordingStore(application)
 
@@ -141,16 +148,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Starts recording from the microphone. The caller must already hold RECORD_AUDIO. */
     fun startRecording() {
+        launchRecording("Recording", appAudio = false) { it.record() }
+    }
+
+    /**
+     * Starts recording what other apps play, using the result of the screen capture consent dialog.
+     * The caller must already hold RECORD_AUDIO.
+     */
+    @RequiresApi(29)
+    fun startAppAudioRecording(resultCode: Int, data: Intent) {
+        val app = getApplication<Application>()
+        launchRecording("App audio", appAudio = true) { recorder ->
+            try {
+                val projection = PlaybackCaptureService.start(app, resultCode, data)
+                // The user can also end the capture from the system UI.
+                projection.registerCallback(
+                    object : MediaProjection.Callback() {
+                        override fun onStop() = recorder.stop()
+                    },
+                    Handler(Looper.getMainLooper()),
+                )
+                recorder.recordPlayback(projection)
+            } finally {
+                PlaybackCaptureService.stop(app)
+            }
+        }
+    }
+
+    private fun launchRecording(
+        namePrefix: String,
+        appAudio: Boolean,
+        record: suspend (AudioRecorder) -> DecodedAudio,
+    ) {
         if (!_uiState.value.canAddTrack) return
         stopPlayback()
         val recorder = AudioRecorder().also { recorder = it }
+        recordingAppAudio = appAudio
         val startedAt = LocalDateTime.now()
-        val name = "Recording " + startedAt.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        val name = namePrefix + " " + startedAt.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
         _uiState.update { it.copy(recording = true) }
 
         viewModelScope.launch {
             val audio = try {
-                recorder.record()
+                record(recorder)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -164,6 +204,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Ignore accidental taps on Record.
             if (audio == null || audio.durationSeconds < MIN_RECORDING_SECONDS) return@launch
             addTrack(name) {
+                // Apps that forbid capture yield silence rather than an error.
+                check(!appAudio || audio.samples.any { it != 0f }) {
+                    getApplication<Application>().getString(R.string.app_audio_silent)
+                }
                 saveRecording(audio, startedAt)
                 audio
             }
@@ -172,6 +216,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopRecording() {
         recorder?.stop()
+    }
+
+    /** Recording app audio has to continue in the background, since the other app is on screen then. */
+    fun stopMicrophoneRecording() {
+        if (!recordingAppAudio) stopRecording()
     }
 
     /** Progress of the ongoing recording, or null when not recording. */

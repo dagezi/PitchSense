@@ -1,10 +1,15 @@
 package io.github.dagezi.pitchsense
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -15,7 +20,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +27,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -52,11 +58,11 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.dagezi.pitchsense.audio.RecordingStore
 import io.github.dagezi.pitchsense.ui.GraphCursor
 import io.github.dagezi.pitchsense.ui.GraphTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
-import io.github.dagezi.pitchsense.ui.RecordIcon
 import io.github.dagezi.pitchsense.ui.RecordingRow
 import io.github.dagezi.pitchsense.ui.StopIcon
 import io.github.dagezi.pitchsense.ui.TrackRow
@@ -106,11 +112,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Starts in the recordings folder, since the picker's Audio section only lists music. */
+private class OpenDocumentInRecordings : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input)
+            .putExtra(DocumentsContract.EXTRA_INITIAL_URI, RecordingStore.folderDocumentUri())
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val openAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val openAudio = rememberLauncherForActivityResult(OpenDocumentInRecordings()) { uri ->
         uri?.let(viewModel::addTrack)
     }
 
@@ -127,8 +140,36 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             PackageManager.PERMISSION_GRANTED
         if (granted) viewModel.startRecording() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
     }
-    // Only record while the app is in the foreground.
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stopRecording() }
+    // Only record the microphone while the app is in the foreground.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stopMicrophoneRecording() }
+
+    val requestScreenCapture = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (Build.VERSION.SDK_INT >= 29 && result.resultCode == Activity.RESULT_OK && data != null) {
+            viewModel.startAppAudioRecording(result.resultCode, data)
+        }
+    }
+    fun launchScreenCaptureConsent() {
+        val manager = context.getSystemService(MediaProjectionManager::class.java)
+        requestScreenCapture.launch(manager.createScreenCaptureIntent())
+    }
+    val requestMicrophoneForAppAudio = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            launchScreenCaptureConsent()
+        } else {
+            Toast.makeText(context, R.string.microphone_permission_denied, Toast.LENGTH_LONG).show()
+        }
+    }
+    fun recordAppAudio() {
+        // Android gates playback capture behind the microphone permission too.
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) launchScreenCaptureConsent() else requestMicrophoneForAppAudio.launch(Manifest.permission.RECORD_AUDIO)
+    }
 
     var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     LaunchedEffect(uiState.recording) {
@@ -163,26 +204,48 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             )
         },
         floatingActionButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (uiState.recording) {
-                    ExtendedFloatingActionButton(
-                        text = { Text(stringResource(R.string.stop_recording)) },
-                        icon = { Icon(StopIcon, contentDescription = null) },
-                        onClick = viewModel::stopRecording,
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                } else if (uiState.canAddTrack) {
-                    ExtendedFloatingActionButton(
-                        text = { Text(stringResource(R.string.record)) },
-                        icon = { Icon(RecordIcon, contentDescription = null) },
-                        onClick = ::record,
-                    )
+            if (uiState.recording) {
+                ExtendedFloatingActionButton(
+                    text = { Text(stringResource(R.string.stop_recording)) },
+                    icon = { Icon(StopIcon, contentDescription = null) },
+                    onClick = viewModel::stopRecording,
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            } else if (uiState.canAddTrack) {
+                var menuOpen by remember { mutableStateOf(false) }
+                Box {
                     ExtendedFloatingActionButton(
                         text = { Text(stringResource(R.string.add_track)) },
                         icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        onClick = { openAudio.launch(arrayOf("audio/*")) },
+                        onClick = { menuOpen = true },
                     )
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.add_from_file)) },
+                            onClick = {
+                                menuOpen = false
+                                openAudio.launch(arrayOf("audio/*"))
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.add_from_mic)) },
+                            onClick = {
+                                menuOpen = false
+                                record()
+                            },
+                        )
+                        // Playback capture needs Android 10.
+                        if (Build.VERSION.SDK_INT >= 29) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.add_from_app_audio)) },
+                                onClick = {
+                                    menuOpen = false
+                                    recordAppAudio()
+                                },
+                            )
+                        }
+                    }
                 }
             }
         },

@@ -2,8 +2,10 @@ package io.github.dagezi.pitchsense.audio
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import java.io.File
 import java.io.IOException
@@ -28,13 +30,10 @@ class RecordingStore(private val context: Context) {
 
         val resolver = context.contentResolver
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val parent =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Environment.DIRECTORY_RECORDINGS
-            else Environment.DIRECTORY_MUSIC
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/x-wav")
-            put(MediaStore.Audio.Media.RELATIVE_PATH, "$parent/$FOLDER")
+            put(MediaStore.Audio.Media.RELATIVE_PATH, relativePath())
             // Hidden from other apps until the file is complete.
             put(MediaStore.Audio.Media.IS_PENDING, 1)
         }
@@ -49,7 +48,19 @@ class RecordingStore(private val context: Context) {
         }
     }
 
-    private companion object {
-        const val FOLDER = "PitchSense"
+    companion object {
+        private const val FOLDER = "PitchSense"
+        private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+
+        private fun relativePath(): String {
+            val parent =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Environment.DIRECTORY_RECORDINGS
+                else Environment.DIRECTORY_MUSIC
+            return "$parent/$FOLDER"
+        }
+
+        /** The recordings folder as a document, for opening the system file picker there. */
+        fun folderDocumentUri(): Uri =
+            DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, "primary:${relativePath()}")
     }
 }
