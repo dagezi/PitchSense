@@ -1,7 +1,6 @@
 package io.github.dagezi.pitchsense
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,7 +11,6 @@ import android.os.Bundle
 import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,15 +47,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.dagezi.pitchsense.audio.RecordingStore
 import io.github.dagezi.pitchsense.ui.GraphCursor
 import io.github.dagezi.pitchsense.ui.GraphTrack
@@ -73,12 +67,37 @@ import io.github.dagezi.pitchsense.ui.theme.TrackColors
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
+    private val openAudio = registerForActivityResult(OpenDocumentInRecordings()) { uri ->
+        uri?.let(viewModel::addTrack)
+    }
+    private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) viewModel.startRecording() else showMicrophoneDenied()
+    }
+    private val requestScreenCapture = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (Build.VERSION.SDK_INT >= 29 && result.resultCode == RESULT_OK && data != null) {
+            viewModel.startAppAudioRecording(result.resultCode, data)
+        }
+    }
+    private val requestMicrophoneForAppAudio = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) launchScreenCaptureConsent() else showMicrophoneDenied()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             PitchSenseTheme {
-                MainScreen(viewModel)
+                MainScreen(
+                    viewModel = viewModel,
+                    onAddFromFile = ::addFromFile,
+                    onRecord = ::record,
+                    onRecordAppAudio = ::recordAppAudio,
+                )
             }
         }
         // On recreation (e.g. rotation) the intent was already handled.
@@ -88,6 +107,37 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIncomingAudio(intent)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Only record the microphone while the app is in the foreground.
+        viewModel.stopMicrophoneRecording()
+    }
+
+    private fun addFromFile() {
+        openAudio.launch(arrayOf("audio/*"))
+    }
+
+    private fun record() {
+        if (hasMicrophonePermission()) viewModel.startRecording() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun recordAppAudio() {
+        // Android gates playback capture behind the microphone permission too.
+        if (hasMicrophonePermission()) launchScreenCaptureConsent() else requestMicrophoneForAppAudio.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun launchScreenCaptureConsent() {
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        requestScreenCapture.launch(manager.createScreenCaptureIntent())
+    }
+
+    private fun hasMicrophonePermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun showMicrophoneDenied() {
+        Toast.makeText(this, R.string.microphone_permission_denied, Toast.LENGTH_LONG).show()
     }
 
     /** Adds audio shared to us ("Share" or "Open with") as tracks. */
@@ -121,55 +171,13 @@ private class OpenDocumentInRecordings : ActivityResultContracts.OpenDocument() 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel = viewModel()) {
+fun MainScreen(
+    viewModel: MainViewModel,
+    onAddFromFile: () -> Unit,
+    onRecord: () -> Unit,
+    onRecordAppAudio: () -> Unit,
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val openAudio = rememberLauncherForActivityResult(OpenDocumentInRecordings()) { uri ->
-        uri?.let(viewModel::addTrack)
-    }
-
-    val context = LocalContext.current
-    val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            viewModel.startRecording()
-        } else {
-            Toast.makeText(context, R.string.microphone_permission_denied, Toast.LENGTH_LONG).show()
-        }
-    }
-    fun record() {
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        if (granted) viewModel.startRecording() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
-    }
-    // Only record the microphone while the app is in the foreground.
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stopMicrophoneRecording() }
-
-    val requestScreenCapture = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val data = result.data
-        if (Build.VERSION.SDK_INT >= 29 && result.resultCode == Activity.RESULT_OK && data != null) {
-            viewModel.startAppAudioRecording(result.resultCode, data)
-        }
-    }
-    fun launchScreenCaptureConsent() {
-        val manager = context.getSystemService(MediaProjectionManager::class.java)
-        requestScreenCapture.launch(manager.createScreenCaptureIntent())
-    }
-    val requestMicrophoneForAppAudio = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            launchScreenCaptureConsent()
-        } else {
-            Toast.makeText(context, R.string.microphone_permission_denied, Toast.LENGTH_LONG).show()
-        }
-    }
-    fun recordAppAudio() {
-        // Android gates playback capture behind the microphone permission too.
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        if (granted) launchScreenCaptureConsent() else requestMicrophoneForAppAudio.launch(Manifest.permission.RECORD_AUDIO)
-    }
 
     var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     LaunchedEffect(uiState.recording) {
@@ -225,14 +233,14 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             text = { Text(stringResource(R.string.add_from_file)) },
                             onClick = {
                                 menuOpen = false
-                                openAudio.launch(arrayOf("audio/*"))
+                                onAddFromFile()
                             },
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.add_from_mic)) },
                             onClick = {
                                 menuOpen = false
-                                record()
+                                onRecord()
                             },
                         )
                         // Playback capture needs Android 10.
@@ -241,7 +249,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                 text = { Text(stringResource(R.string.add_from_app_audio)) },
                                 onClick = {
                                     menuOpen = false
-                                    recordAppAudio()
+                                    onRecordAppAudio()
                                 },
                             )
                         }
