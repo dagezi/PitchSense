@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.dagezi.pitchsense.PhoneState
 import io.github.dagezi.pitchsense.R
 import io.github.dagezi.pitchsense.TrackState
 
@@ -65,6 +66,21 @@ fun TrackRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+            if (track is TrackState.Ready) {
+                val phones = track.phones
+                if (phones !is PhoneState.Done) {
+                    Text(
+                        when (phones) {
+                            is PhoneState.Failed -> stringResource(R.string.phones_failed, phones.message)
+                            else -> stringResource(R.string.phones_pending)
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             if (track is TrackState.Failed) {
                 Text(

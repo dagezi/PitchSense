@@ -21,4 +21,7 @@
     <string name="load_failed">Could not load: %1$s</string>
     <string name="axis_hz">Hz</string>
     <string name="axis_semitones">Semitones</string>
+    <string name="phones_pending">Transcribing phones…</string>
+    <string name="phones_failed">No phones: %1$s</string>
+    <string name="phone_model_missing">phone model not installed</string>
 </resources>

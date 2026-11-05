@@ -17,11 +17,14 @@ import io.github.dagezi.pitchsense.audio.DecodedAudio
 import io.github.dagezi.pitchsense.audio.PcmPlayer
 import io.github.dagezi.pitchsense.audio.PlaybackCaptureService
 import io.github.dagezi.pitchsense.audio.RecordingStore
+import io.github.dagezi.pitchsense.phone.Phone
+import io.github.dagezi.pitchsense.phone.PhoneRecognizer
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.TimeRange
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +42,13 @@ private const val TAG = "MainViewModel"
 
 class RecordingStatus(val elapsedSeconds: Float, val level: Float)
 
+/** Progress of a track's phone transcription, which finishes after its pitch is shown. */
+sealed interface PhoneState {
+    data object Pending : PhoneState
+    data class Done(val phones: List<Phone>) : PhoneState
+    data class Failed(val message: String) : PhoneState
+}
+
 sealed interface TrackState {
     val id: Long
     val name: String
@@ -54,6 +64,7 @@ sealed interface TrackState {
         override val colorIndex: Int,
         val audio: DecodedAudio,
         val pitch: PitchTrack,
+        val phones: PhoneState = PhoneState.Pending,
         val visible: Boolean = true,
         /** Where the track's time 0 sits on the shared timeline. */
         val offsetSeconds: Float = 0f,
@@ -107,6 +118,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val recordingStore = RecordingStore(application)
 
+    private val phoneJobs = mutableMapOf<Long, Job>()
+    private val phoneRecognizer by lazy { PhoneRecognizer(application) }
+
+    /** One recognition at a time: the model is large and its session is not shared across threads. */
+    private val phoneDispatcher = Dispatchers.Default.limitedParallelism(1)
+
     fun addTrack(uri: Uri) {
         addTracks(listOf(uri))
     }
@@ -143,7 +160,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             loadJobs.remove(id)
             replaceTrack(id) { loaded }
+            if (loaded is TrackState.Ready) recognizePhones(id, loaded.audio)
         }
+    }
+
+    private fun recognizePhones(id: Long, audio: DecodedAudio) {
+        phoneJobs[id] = viewModelScope.launch {
+            val result = try {
+                withContext(phoneDispatcher) {
+                    if (!phoneRecognizer.isModelAvailable) {
+                        PhoneState.Failed(getApplication<Application>().getString(R.string.phone_model_missing))
+                    } else {
+                        PhoneState.Done(phoneRecognizer.recognize(audio))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Phone recognition failed", e)
+                PhoneState.Failed(e.message ?: e.toString())
+            }
+            phoneJobs.remove(id)
+            replaceTrack(id) { if (it is TrackState.Ready) it.copy(phones = result) else it }
+        }
+    }
+
+    override fun onCleared() {
+        // Close on the recognition dispatcher so a recognition still running finishes first.
+        CoroutineScope(phoneDispatcher).launch { phoneRecognizer.close() }
     }
 
     /** Starts recording from the microphone. The caller must already hold RECORD_AUDIO. */
@@ -303,6 +347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removeTrack(id: Long) {
         if (_uiState.value.playingTrackId == id) stopPlayback()
         loadJobs.remove(id)?.cancel()
+        phoneJobs.remove(id)?.cancel()
         _uiState.update { state -> state.copy(tracks = state.tracks.filterNot { it.id == id }) }
     }
 

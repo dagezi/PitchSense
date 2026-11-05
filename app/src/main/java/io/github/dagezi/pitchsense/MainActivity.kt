@@ -289,7 +289,15 @@ fun MainScreen(
                     PitchGraph(
                         tracks = readyTracks
                             .filter { it.visible }
-                            .map { GraphTrack(it.id, it.pitch, it.offsetSeconds, TrackColors[it.colorIndex]) },
+                            .map {
+                                GraphTrack(
+                                    it.id,
+                                    it.pitch,
+                                    it.offsetSeconds,
+                                    TrackColors[it.colorIndex],
+                                    phones = (it.phones as? PhoneState.Done)?.phones.orEmpty(),
+                                )
+                            },
                         viewport = (viewport ?: Viewport.fit(timeline)).clampedTo(timeline),
                         bounds = timeline,
                         axis = uiState.axis,

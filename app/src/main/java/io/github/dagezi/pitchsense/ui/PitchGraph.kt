@@ -27,6 +27,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
+import io.github.dagezi.pitchsense.phone.Phone
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -36,7 +37,13 @@ import kotlin.math.roundToInt
 
 enum class PitchAxis { Hz, Semitones }
 
-class GraphTrack(val id: Long, val pitch: PitchTrack, val offsetSeconds: Float, val color: Color)
+class GraphTrack(
+    val id: Long,
+    val pitch: PitchTrack,
+    val offsetSeconds: Float,
+    val color: Color,
+    val phones: List<Phone> = emptyList(),
+)
 
 /** A vertical line marking a time, such as the playback position. */
 class GraphCursor(val seconds: Float, val color: Color)
@@ -261,6 +268,25 @@ fun PitchGraph(
                     }
                 }
                 drawPath(path, track.color, style = stroke)
+            }
+
+            // Phones: one lane per track along the top, each label starting where its phone starts.
+            val laneHeight = 18.dp.toPx()
+            val gap = 2.dp.toPx()
+            tracks.forEachIndexed { lane, track ->
+                val phoneStyle = TextStyle(color = track.color, fontSize = 13.sp)
+                val y = lane * laneHeight
+                var nextFreeX = Float.NEGATIVE_INFINITY
+                for (phone in track.phones) {
+                    val x = geometry.xOf(phone.startSeconds + track.offsetSeconds)
+                    if (x > size.width) break
+                    // Skip labels that would overlap the previous one; zooming in reveals them.
+                    if (x < nextFreeX || geometry.xOf(phone.endSeconds + track.offsetSeconds) < 0f) continue
+                    val label = textMeasurer.measure(phone.symbol, phoneStyle)
+                    drawLine(track.color, Offset(x, y), Offset(x, y + laneHeight), strokeWidth = 1.dp.toPx())
+                    drawText(label, topLeft = Offset(x + gap, y + (laneHeight - label.size.height) / 2))
+                    nextFreeX = x + gap + label.size.width + gap
+                }
             }
 
             if (cursor != null) {
