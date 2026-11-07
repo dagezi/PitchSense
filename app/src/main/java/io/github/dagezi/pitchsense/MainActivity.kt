@@ -294,6 +294,7 @@ fun MainScreen(
                                     it.id,
                                     it.pitch,
                                     it.offsetSeconds,
+                                    it.durationSeconds,
                                     TrackColors[it.colorIndex],
                                     phones = (it.phones as? PhoneState.Done)?.phones.orEmpty(),
                                 )

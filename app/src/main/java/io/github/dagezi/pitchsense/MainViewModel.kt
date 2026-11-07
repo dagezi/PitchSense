@@ -101,6 +101,26 @@ data class MainUiState(
                 end = ready.maxOf { it.offsetSeconds + it.durationSeconds },
             )
         }
+
+    /**
+     * Part of [track] that its Play button plays, in the track's own time: the selection, or the
+     * whole track when there is no selection or it misses the track.
+     */
+    fun playRange(track: TrackState.Ready): TimeRange {
+        val from = ((selection?.start ?: Float.NEGATIVE_INFINITY) - track.offsetSeconds).coerceAtLeast(0f)
+        val to = ((selection?.end ?: Float.POSITIVE_INFINITY) - track.offsetSeconds)
+            .coerceAtMost(track.durationSeconds)
+        return if (from < to) TimeRange(from, to) else TimeRange(0f, track.durationSeconds)
+    }
+
+    /** Trims the selection to the timeline after it shrank, dropping it if nothing is left. */
+    fun withSelectionInTimeline(): MainUiState {
+        val selection = selection ?: return this
+        val timeline = timeline ?: return copy(selection = null)
+        val start = selection.start.coerceAtLeast(timeline.start)
+        val end = selection.end.coerceAtMost(timeline.end)
+        return copy(selection = if (start < end) TimeRange(start, end) else null)
+    }
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -288,18 +308,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val state = _uiState.value
         val track = state.readyTracks.find { it.id == id } ?: return
-        // Convert the timeline selection into the track's own time.
-        val from = ((state.selection?.start ?: Float.NEGATIVE_INFINITY) - track.offsetSeconds)
-            .coerceAtLeast(0f)
-        val to = ((state.selection?.end ?: Float.POSITIVE_INFINITY) - track.offsetSeconds)
-            .coerceAtMost(track.durationSeconds)
-        if (from >= to) return
+        val range = state.playRange(track)
 
         playJob?.cancel()
         _uiState.update { it.copy(playingTrackId = id) }
         playJob = viewModelScope.launch {
             try {
-                player.play(track.audio, from, to)
+                player.play(track.audio, range.start, range.end)
             } finally {
                 _uiState.update { if (it.playingTrackId == id) it.copy(playingTrackId = null) else it }
             }
@@ -321,6 +336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTrackOffset(id: Long, offsetSeconds: Float) {
         replaceTrack(id) { if (it is TrackState.Ready) it.copy(offsetSeconds = offsetSeconds) else it }
+        _uiState.update { it.withSelectionInTimeline() }
     }
 
     /** Shifts tracks so that speech starts at the same moment in all of them. */
@@ -336,7 +352,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val onset = onsets[track.id]
                     if (track is TrackState.Ready && onset != null) track.copy(offsetSeconds = target - onset) else track
                 },
-            )
+            ).withSelectionInTimeline()
         }
     }
 
@@ -348,7 +364,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.playingTrackId == id) stopPlayback()
         loadJobs.remove(id)?.cancel()
         phoneJobs.remove(id)?.cancel()
-        _uiState.update { state -> state.copy(tracks = state.tracks.filterNot { it.id == id }) }
+        _uiState.update { state -> state.copy(tracks = state.tracks.filterNot { it.id == id }).withSelectionInTimeline() }
     }
 
     fun setTrackVisible(id: Long, visible: Boolean) {

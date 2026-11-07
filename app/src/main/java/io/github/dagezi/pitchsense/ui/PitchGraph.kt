@@ -41,6 +41,7 @@ class GraphTrack(
     val id: Long,
     val pitch: PitchTrack,
     val offsetSeconds: Float,
+    val durationSeconds: Float,
     val color: Color,
     val phones: List<Phone> = emptyList(),
 )
@@ -276,6 +277,14 @@ fun PitchGraph(
             tracks.forEachIndexed { lane, track ->
                 val phoneStyle = TextStyle(color = track.color, fontSize = 13.sp)
                 val y = lane * laneHeight
+                val rangeWidth = 2.dp.toPx()
+                val rangeY = y + laneHeight - rangeWidth / 2
+                drawLine(
+                    track.color,
+                    Offset(geometry.xOf(track.offsetSeconds), rangeY),
+                    Offset(geometry.xOf(track.durationSeconds + track.offsetSeconds), rangeY),
+                    strokeWidth = rangeWidth,
+                )
                 var nextFreeX = Float.NEGATIVE_INFINITY
                 for (phone in track.phones) {
                     val x = geometry.xOf(phone.startSeconds + track.offsetSeconds)
