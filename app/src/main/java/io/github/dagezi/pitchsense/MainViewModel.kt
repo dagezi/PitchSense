@@ -272,7 +272,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 check(!appAudio || audio.samples.any { it != 0f }) {
                     getApplication<Application>().getString(R.string.app_audio_silent)
                 }
-                saveRecording(audio, startedAt)
+                saveRecording(audio, startedAt, appAudio)
                 audio
             }
         }
@@ -291,8 +291,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun recordingStatus(): RecordingStatus? =
         recorder?.let { RecordingStatus(it.elapsedSeconds, it.level) }
 
-    private fun saveRecording(audio: DecodedAudio, startedAt: LocalDateTime) {
-        val name = "recording-" + startedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".wav"
+    private fun saveRecording(audio: DecodedAudio, startedAt: LocalDateTime, appAudio: Boolean) {
+        val prefix = if (appAudio) "app-" else "mic-"
+        val name = prefix + startedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".wav"
         try {
             recordingStore.save(audio, name)
         } catch (e: Exception) {
