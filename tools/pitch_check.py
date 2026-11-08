@@ -1,7 +1,8 @@
 """Run PitchSense's pitch analysis on WAV files outside the app, to investigate odd contours.
 
 Mirrors app/src/main/java/.../pitch: resample to 16 kHz, 70 Hz high-pass, YIN candidates
-(65-800 Hz, 10 ms hop), silence gate at 3% of peak, Viterbi tracking. Keep the constants in sync.
+(65-800 Hz, 10 ms hop), silence gate at 1% of peak with only clearly periodic
+candidates kept below 3%, Viterbi tracking. Keep the constants in sync.
 
     python3 tools/pitch_check.py recording.wav [--from 2.7 --to 3.3]
 
@@ -20,7 +21,9 @@ RATE = 16_000
 HOP = 160
 MIN_F, MAX_F = 65.0, 800.0
 HIGH_PASS_HZ = 70.0
-SILENCE_RATIO = 0.03
+SILENCE_RATIO = 0.01
+QUIET_RATIO = 0.03
+QUIET_MAX_COST = 0.3
 MAX_COST = 0.8
 LAG_BIAS = 0.1
 UNVOICED_COST = 0.5
@@ -75,12 +78,14 @@ def high_pass(x, fc=HIGH_PASS_HZ, q=0.7071):
 
 def candidates(y):
     """Per frame: (time, [(hz, cost)]); gated frames have no candidates."""
-    gate = np.abs(y).max() * SILENCE_RATIO
+    peak = np.abs(y).max()
+    gate, quiet = peak * SILENCE_RATIO, peak * QUIET_RATIO
     frames = []
     for k in range((len(y) - FRAME) // HOP + 1 if len(y) >= FRAME else 0):
         seg = y[k * HOP:k * HOP + FRAME]
         t = (k * HOP + W / 2) / RATE
-        if np.sqrt(np.mean(seg[:W] ** 2)) < gate:
+        rms = np.sqrt(np.mean(seg[:W] ** 2))
+        if rms < gate:
             frames.append((t, []))
             continue
         win = sliding_window_view(seg, W)[: MAX_LAG + 2]
@@ -94,6 +99,8 @@ def candidates(y):
                 den = cm[tau - 1] - 2 * cm[tau] + cm[tau + 1]
                 ft = tau + (0.5 * (cm[tau - 1] - cm[tau + 1]) / den if den else 0)
                 c.append((RATE / ft, cm[tau] + LAG_BIAS * tau / MAX_LAG))
+        if rms < quiet:
+            c = [(hz, cost) for hz, cost in c if cost < QUIET_MAX_COST]
         frames.append((t, c))
     return frames
 

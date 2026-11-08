@@ -131,6 +131,16 @@ class PitchAnalyzerTest {
     }
 
     @Test
+    fun tracksSoftSpeechAfterLoudSpeech() {
+        val samples = voice(1.0, noise = 0.0002) { t -> if (t < 0.4) 200.0 else if (t >= 0.5) 150.0 else Double.NaN }
+        // The second phrase's RMS is about 2% of the overall peak, below the old 3% gate.
+        for (i in 8_000 until samples.size) samples[i] *= 0.05f
+        val track = PitchAnalyzer.analyze(DecodedAudio(samples, 16_000))
+        val soft = track.frequencies.indices.filter { track.timeOf(it) in 0.55f..0.95f }
+        for (i in soft) assertEquals("frame $i", 150f, track.frequencies[i], 2f)
+    }
+
+    @Test
     fun detectsVeryLowVoice() {
         val track = PitchAnalyzer.analyze(
             DecodedAudio(voice(1.0, noise = 0.005) { t -> if (t in 0.2..0.8) 70.0 else Double.NaN }, 16_000),

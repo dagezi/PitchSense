@@ -11,7 +11,14 @@ object PitchAnalyzer {
     private const val HOP_SECONDS = 0.01f
 
     /** Frames quieter than this fraction of the peak amplitude are treated as unvoiced. */
-    private const val SILENCE_RATIO = 0.03f
+    private const val SILENCE_RATIO = 0.01f
+
+    /**
+     * Frames quieter than this fraction of the peak keep only clearly periodic candidates, so soft
+     * speech is still tracked while low-level noise and breath are not.
+     */
+    private const val QUIET_RATIO = 0.03f
+    private const val QUIET_MAX_COST = 0.3f
 
     /** Removes mains hum and rumble, which otherwise read as low pitch during silence. */
     private const val HIGH_PASS_HZ = 70f
@@ -24,14 +31,20 @@ object PitchAnalyzer {
         )
         val detector = YinPitchDetector(ANALYSIS_SAMPLE_RATE)
         val hop = (ANALYSIS_SAMPLE_RATE * HOP_SECONDS).roundToInt()
-        val gate = (samples.maxOfOrNull { abs(it) } ?: 0f) * SILENCE_RATIO
+        val peak = samples.maxOfOrNull { abs(it) } ?: 0f
+        val gate = peak * SILENCE_RATIO
+        val quiet = peak * QUIET_RATIO
         val frameCount =
             if (samples.size < detector.frameSize) 0 else (samples.size - detector.frameSize) / hop + 1
 
         val candidates = List(frameCount) { i ->
             val offset = i * hop
-            if (rms(samples, offset, detector.windowSize) < gate) emptyList()
-            else detector.candidates(samples, offset)
+            val level = rms(samples, offset, detector.windowSize)
+            when {
+                level < gate -> emptyList()
+                level < quiet -> detector.candidates(samples, offset).filter { it.cost < QUIET_MAX_COST }
+                else -> detector.candidates(samples, offset)
+            }
         }
         return PitchTrack(
             frequencies = PitchTracker.track(candidates),
