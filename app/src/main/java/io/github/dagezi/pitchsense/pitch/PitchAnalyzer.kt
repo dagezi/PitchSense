@@ -10,20 +10,10 @@ object PitchAnalyzer {
     const val ANALYSIS_SAMPLE_RATE = 16_000
     private const val HOP_SECONDS = 0.01f
 
-    /** Frames quieter than this fraction of the peak amplitude are treated as unvoiced. */
-    private const val SILENCE_RATIO = 0.01f
-
-    /**
-     * Frames quieter than this fraction of the peak keep only clearly periodic candidates, so soft
-     * speech is still tracked while low-level noise and breath are not.
-     */
-    private const val QUIET_RATIO = 0.03f
-    private const val QUIET_MAX_COST = 0.3f
-
     /** Removes mains hum and rumble, which otherwise read as low pitch during silence. */
     private const val HIGH_PASS_HZ = 70f
 
-    fun analyze(audio: DecodedAudio): PitchTrack {
+    fun analyze(audio: DecodedAudio, settings: PitchSettings = PitchSettings()): PitchTrack {
         val samples = HighPassFilter.apply(
             Resampler.resample(audio.samples, audio.sampleRate, ANALYSIS_SAMPLE_RATE),
             ANALYSIS_SAMPLE_RATE,
@@ -32,8 +22,8 @@ object PitchAnalyzer {
         val detector = YinPitchDetector(ANALYSIS_SAMPLE_RATE)
         val hop = (ANALYSIS_SAMPLE_RATE * HOP_SECONDS).roundToInt()
         val peak = samples.maxOfOrNull { abs(it) } ?: 0f
-        val gate = peak * SILENCE_RATIO
-        val quiet = peak * QUIET_RATIO
+        val gate = peak * settings.silenceRatio
+        val quiet = peak * settings.quietRatio
         val frameCount =
             if (samples.size < detector.frameSize) 0 else (samples.size - detector.frameSize) / hop + 1
 
@@ -42,12 +32,12 @@ object PitchAnalyzer {
             val level = rms(samples, offset, detector.windowSize)
             when {
                 level < gate -> emptyList()
-                level < quiet -> detector.candidates(samples, offset).filter { it.cost < QUIET_MAX_COST }
+                level < quiet -> detector.candidates(samples, offset).filter { it.cost < settings.quietMaxCost }
                 else -> detector.candidates(samples, offset)
             }
         }
         return PitchTrack(
-            frequencies = PitchTracker.track(candidates),
+            frequencies = PitchTracker.track(candidates, settings.unvoicedCost, settings.voicingSwitchCost),
             hopSeconds = hop.toFloat() / ANALYSIS_SAMPLE_RATE,
             startSeconds = detector.windowSize / 2f / ANALYSIS_SAMPLE_RATE,
         )

@@ -24,4 +24,12 @@
     <string name="phones_pending">Transcribing phones…</string>
     <string name="phones_failed">No phones: %1$s</string>
     <string name="phone_model_missing">phone model not installed</string>
+    <string name="pitch_settings">Pitch settings</string>
+    <string name="pitch_settings_close">Done</string>
+    <string name="pitch_settings_reset">Reset</string>
+    <string name="setting_silence_ratio">Silence gate (% of peak)</string>
+    <string name="setting_quiet_ratio">Quiet level (% of peak)</string>
+    <string name="setting_quiet_max_cost">Max YIN cost when quiet</string>
+    <string name="setting_unvoiced_cost">Unvoiced cost</string>
+    <string name="setting_voicing_switch_cost">Voiced/unvoiced switch cost</string>
 </resources>

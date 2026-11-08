@@ -11,12 +11,6 @@ import kotlin.math.ln
  * continues the neighboring contour, and a strong one an octave away from it is not.
  */
 object PitchTracker {
-    /** Cost of calling a frame unvoiced when it has candidates; candidates cheaper than this win on their own. */
-    private const val UNVOICED_COST = 0.5f
-
-    /** Cost of switching between voiced and unvoiced. */
-    private const val VOICING_SWITCH_COST = 0.6f
-
     private const val COST_PER_SEMITONE = 0.08f
 
     /** Pitch can't move further than this between frames; speech glides stay well below it. */
@@ -24,12 +18,19 @@ object PitchTracker {
 
     /**
      * Returns F0 in Hz per frame, NaN where unvoiced. A frame with no candidates is always unvoiced.
+     *
+     * [unvoicedCost] is what calling a frame unvoiced costs when it has candidates, and
+     * [voicingSwitchCost] what switching between voiced and unvoiced costs; see [PitchSettings].
      */
-    fun track(frames: List<List<PitchCandidate>>): FloatArray {
+    fun track(
+        frames: List<List<PitchCandidate>>,
+        unvoicedCost: Float = PitchSettings().unvoicedCost,
+        voicingSwitchCost: Float = PitchSettings().voicingSwitchCost,
+    ): FloatArray {
         if (frames.isEmpty()) return FloatArray(0)
 
         // State 0 is unvoiced; state k > 0 is candidate k - 1.
-        var cost = FloatArray(frames[0].size + 1) { s -> if (s == 0) UNVOICED_COST else frames[0][s - 1].cost }
+        var cost = FloatArray(frames[0].size + 1) { s -> if (s == 0) unvoicedCost else frames[0][s - 1].cost }
         val back = Array(frames.size) { IntArray(0) }
         for (i in 1 until frames.size) {
             val previous = frames[i - 1]
@@ -39,13 +40,13 @@ object PitchTracker {
             for (s in 0..current.size) {
                 var best = Float.POSITIVE_INFINITY
                 for (p in 0..previous.size) {
-                    val total = cost[p] + transitionCost(previous.getOrNull(p - 1), current.getOrNull(s - 1))
+                    val total = cost[p] + transitionCost(previous.getOrNull(p - 1), current.getOrNull(s - 1), voicingSwitchCost)
                     if (total < best) {
                         best = total
                         from[s] = p
                     }
                 }
-                next[s] = best + if (s == 0) UNVOICED_COST else current[s - 1].cost
+                next[s] = best + if (s == 0) unvoicedCost else current[s - 1].cost
             }
             cost = next
             back[i] = from
@@ -60,9 +61,9 @@ object PitchTracker {
         return result
     }
 
-    private fun transitionCost(from: PitchCandidate?, to: PitchCandidate?): Float = when {
+    private fun transitionCost(from: PitchCandidate?, to: PitchCandidate?, voicingSwitchCost: Float): Float = when {
         from == null && to == null -> 0f
-        from == null || to == null -> VOICING_SWITCH_COST
+        from == null || to == null -> voicingSwitchCost
         else -> {
             val semitones = abs(12 * ln(to.frequency / from.frequency) / LN_2)
             if (semitones > MAX_STEP_SEMITONES) Float.POSITIVE_INFINITY else COST_PER_SEMITONE * semitones

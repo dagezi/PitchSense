@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -57,6 +59,7 @@ import io.github.dagezi.pitchsense.ui.GraphCursor
 import io.github.dagezi.pitchsense.ui.GraphTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.PitchGraph
+import io.github.dagezi.pitchsense.ui.PitchSettingsPanel
 import io.github.dagezi.pitchsense.ui.RecordingRow
 import io.github.dagezi.pitchsense.ui.StopIcon
 import io.github.dagezi.pitchsense.ui.TrackRow
@@ -192,6 +195,8 @@ fun MainScreen(
     val timeline = uiState.timeline
     // Refit whenever tracks are added or removed; offsets changing keep the current view.
     var viewport by remember(readyTracks.map { it.id }) { mutableStateOf(timeline?.let(Viewport::fit)) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    // Recordings start from the button the panel hides, so they never run while it is open.
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -208,11 +213,16 @@ fun MainScreen(
                     ) {
                         Text(stringResource(R.string.fit_view))
                     }
+                    IconButton(onClick = { settingsOpen = !settingsOpen }, enabled = !uiState.recording) {
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.pitch_settings))
+                    }
                 },
             )
         },
         floatingActionButton = {
-            if (uiState.recording) {
+            if (settingsOpen) {
+                // The settings panel sits where the button would be.
+            } else if (uiState.recording) {
                 ExtendedFloatingActionButton(
                     text = { Text(stringResource(R.string.stop_recording)) },
                     icon = { Icon(StopIcon, contentDescription = null) },
@@ -314,6 +324,14 @@ fun MainScreen(
                 }
             }
 
+            if (settingsOpen) {
+                PitchSettingsPanel(
+                    settings = uiState.pitchSettings,
+                    onChange = viewModel::setPitchSettings,
+                    onClose = { settingsOpen = false },
+                )
+                return@Column
+            }
             Column {
                 for (track in uiState.tracks) {
                     TrackRow(

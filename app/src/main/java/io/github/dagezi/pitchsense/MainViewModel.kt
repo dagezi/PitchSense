@@ -20,6 +20,7 @@ import io.github.dagezi.pitchsense.audio.RecordingStore
 import io.github.dagezi.pitchsense.phone.Phone
 import io.github.dagezi.pitchsense.phone.PhoneRecognizer
 import io.github.dagezi.pitchsense.pitch.PitchAnalyzer
+import io.github.dagezi.pitchsense.pitch.PitchSettings
 import io.github.dagezi.pitchsense.pitch.PitchTrack
 import io.github.dagezi.pitchsense.ui.PitchAxis
 import io.github.dagezi.pitchsense.ui.TimeRange
@@ -87,6 +88,7 @@ data class MainUiState(
     /** Part of the timeline to play, or null to play whole tracks. */
     val selection: TimeRange? = null,
     val recording: Boolean = false,
+    val pitchSettings: PitchSettings = PitchSettings(),
 ) {
     /** A recording in progress holds a slot, so nothing else can be added meanwhile. */
     val canAddTrack: Boolean get() = !recording && tracks.size < MAX_TRACKS
@@ -124,8 +126,11 @@ data class MainUiState(
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val _uiState = MutableStateFlow(MainUiState())
+    private val pitchSettingsStore = PitchSettingsStore(application)
+    private val _uiState = MutableStateFlow(MainUiState(pitchSettings = pitchSettingsStore.load()))
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    private var reanalyzeJob: Job? = null
 
     private val loadJobs = mutableMapOf<Long, Job>()
     private var nextId = 0L
@@ -171,7 +176,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val loaded = try {
                 withContext(Dispatchers.Default) {
                     val audio = load()
-                    TrackState.Ready(id, name, colorIndex, audio, PitchAnalyzer.analyze(audio))
+                    TrackState.Ready(id, name, colorIndex, audio, PitchAnalyzer.analyze(audio, _uiState.value.pitchSettings))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -374,6 +379,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAxis(axis: PitchAxis) {
         _uiState.update { it.copy(axis = axis) }
+    }
+
+    /** Saves [settings] and reanalyzes the loaded tracks with them. */
+    fun setPitchSettings(settings: PitchSettings) {
+        if (settings == _uiState.value.pitchSettings) return
+        _uiState.update { it.copy(pitchSettings = settings) }
+        pitchSettingsStore.save(settings)
+
+        reanalyzeJob?.cancel()
+        reanalyzeJob = viewModelScope.launch {
+            for (track in _uiState.value.readyTracks) {
+                val pitch = withContext(Dispatchers.Default) { PitchAnalyzer.analyze(track.audio, settings) }
+                replaceTrack(track.id) { if (it is TrackState.Ready) it.copy(pitch = pitch) else it }
+            }
+        }
     }
 
     private fun replaceTrack(id: Long, transform: (TrackState) -> TrackState) {
